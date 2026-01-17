@@ -1,0 +1,93 @@
+[project]
+name = "cognition-evaluation"
+version = "0.1.0"
+description = "Evaluation framework for brain foundation models on cognition prediction"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    # Core scientific computing
+    "numpy>=2.0",
+    "scipy>=1.10",
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+    
+    # Neuroimaging
+    "nibabel>=5.0",
+    "nilearn>=0.10",
+    
+    # Deep learning
+    "torch>=2.0",
+    "transformers>=4.30",
+    
+    # Visualization
+    "matplotlib>=3.7",
+    
+    # Utilities
+    "tqdm>=4.60",
+    "huggingface-hub>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+]
+data = [
+    # Data acquisition tools
+    "datalad>=1.0",
+    "openneuro-py>=2024.1",
+    "awscli>=1.30",
+]
+all = [
+    "cognition-evaluation[dev,data]",
+]
+
+[project.scripts]
+# CLI entry points for main scripts
+cog-preprocess = "scripts.preprocessing.preprocess_brainlm:main"
+cog-extract = "scripts.data_preparation.extract_embeddings:main"
+cog-predict = "scripts.evaluation.run_cognition_prediction:main"
+cog-reconstruct = "scripts.evaluation.run_reconstruction_eval:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "models",
+    "preprocessing", 
+    "scripts",
+    "utils",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["models", "preprocessing", "utils", "scripts", "brainlm_mae"]
