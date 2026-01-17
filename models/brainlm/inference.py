@@ -176,6 +176,136 @@ def run_reconstruction(
     }
 
 
+def extract_full_embeddings(
+    model: Any,
+    data: np.ndarray,
+    device: str,
+) -> Dict[str, np.ndarray]:
+    """
+    Extract full encoder embeddings from BrainLM (all tokens, not just CLS).
+    
+    Args:
+        model: BrainLM model
+        data: fMRI data of shape [424, 200]
+        device: Device string
+        
+    Returns:
+        Dictionary with:
+            - cls_embedding: CLS token embedding [hidden_size]
+            - patch_embeddings: All patch embeddings [n_patches, hidden_size]
+            - full_sequence: Full sequence including CLS [n_patches+1, hidden_size]
+    """
+    x_pad = prepare_input(data, model, device)
+    
+    with torch.no_grad():
+        enc = model.vit(pixel_values=x_pad, output_hidden_states=True)
+        full_sequence = enc.last_hidden_state[0].cpu().numpy()  # [n_tokens, hidden_size]
+        
+    return {
+        "cls_embedding": full_sequence[0],           # CLS token
+        "patch_embeddings": full_sequence[1:],       # All patches
+        "full_sequence": full_sequence,              # Full sequence
+    }
+
+
+def extract_reconstruction(
+    model: Any,
+    data: np.ndarray,
+    device: str,
+    mask_ratio: float = 0.0,
+) -> Dict[str, np.ndarray]:
+    """
+    Run full forward pass and extract reconstruction.
+    
+    For proper reconstruction, model should be loaded with mask_ratio > 0.
+    With mask_ratio=0, returns the autoencoder output (should approximate input).
+    
+    Args:
+        model: BrainLM model
+        data: fMRI data of shape [424, 200]
+        device: Device string
+        mask_ratio: Mask ratio (0.0 for full reconstruction, >0 for masked)
+        
+    Returns:
+        Dictionary with:
+            - input: Original input [424, 200]
+            - reconstruction: Reconstructed signal [3, H, W] (raw model output)
+            - reconstruction_424: Cropped to [424, 200]
+            - mask: Mask array (if mask_ratio > 0)
+    """
+    # Prepare input
+    if data.shape[0] != 424:
+        data = data.T
+    if data.shape[1] >= 200:
+        start = (data.shape[1] - 200) // 2
+        data_200 = data[:, start:start+200]
+    else:
+        data_200 = np.pad(data, ((0, 0), (0, 200 - data.shape[1])), mode='edge')
+    
+    x = torch.tensor(data_200.astype(np.float32))
+    x = x.unsqueeze(0).unsqueeze(0).repeat(1, 3, 1, 1).to(device)
+    
+    with torch.no_grad():
+        out = model(pixel_values=x, output_hidden_states=True, return_dict=True)
+    
+    # Extract reconstruction - logits has shape [1, 3, H, W]
+    recon_raw = out.logits.cpu().numpy()[0]  # [3, H, W]
+    
+    # Crop to original 424x200 (take first channel, crop spatial dims)
+    recon_424 = recon_raw[0, :424, :200]  # [424, 200]
+    
+    result = {
+        "input": data_200,
+        "reconstruction": recon_raw,
+        "reconstruction_424": recon_424,
+    }
+    
+    if out.mask is not None:
+        result["mask"] = out.mask.cpu().numpy()[0]
+    if out.loss is not None:
+        result["loss"] = out.loss.item()
+        
+    return result
+
+
+def extract_all_features(
+    model: Any,
+    data: np.ndarray,
+    device: str,
+) -> Dict[str, np.ndarray]:
+    """
+    Extract all features from BrainLM in one pass: embeddings + reconstruction.
+    
+    This is the main function for cognition variance analysis.
+    
+    Args:
+        model: BrainLM model (should be loaded with mask_ratio=0 for full reconstruction)
+        data: fMRI data of shape [424, 200]
+        device: Device string
+        
+    Returns:
+        Dictionary with:
+            - input: Original input [424, 200]
+            - cls_embedding: CLS token [hidden_size]
+            - patch_embeddings: Patch embeddings [n_patches, hidden_size]
+            - full_sequence: Full encoder output [n_patches+1, hidden_size]
+            - reconstruction_424: Reconstructed signal [424, 200]
+    """
+    # Get embeddings
+    emb = extract_full_embeddings(model, data, device)
+    
+    # Get reconstruction
+    recon = extract_reconstruction(model, data, device)
+    
+    return {
+        "input": recon["input"],
+        "cls_embedding": emb["cls_embedding"],
+        "patch_embeddings": emb["patch_embeddings"],
+        "full_sequence": emb["full_sequence"],
+        "reconstruction_424": recon["reconstruction_424"],
+    }
+
+
 def extract_embeddings_batch(
     model: Any,
     npy_files: Dict[str, str],
@@ -208,3 +338,37 @@ def extract_embeddings_batch(
             print(f"  ✗ {subject_id}: {e}")
     
     return embeddings
+
+
+def extract_all_features_batch(
+    model: Any,
+    npy_files: Dict[str, str],
+    device: str,
+    verbose: bool = True,
+) -> Dict[str, Dict[str, np.ndarray]]:
+    """
+    Extract all features (embeddings + reconstruction) for a batch of files.
+    
+    Args:
+        model: BrainLM model
+        npy_files: Dict mapping subject_id -> path to .npy file
+        device: Device string
+        verbose: Whether to show progress bar
+        
+    Returns:
+        Dict mapping subject_id -> feature dict with:
+            - input, cls_embedding, patch_embeddings, full_sequence, reconstruction_424
+    """
+    from tqdm import tqdm
+    
+    features = {}
+    iterator = tqdm(npy_files.items(), desc="Extracting features") if verbose else npy_files.items()
+    
+    for subject_id, npy_path in iterator:
+        try:
+            data = np.load(npy_path)
+            features[subject_id] = extract_all_features(model, data, device)
+        except Exception as e:
+            print(f"  ✗ {subject_id}: {e}")
+    
+    return features
