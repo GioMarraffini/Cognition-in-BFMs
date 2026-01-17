@@ -14,6 +14,11 @@ from .inference import (
     run_reconstruction,
     extract_embeddings_batch,
     prepare_input,
+    # New functions for cognition variance analysis
+    extract_full_embeddings,
+    extract_reconstruction,
+    extract_all_features,
+    extract_all_features_batch,
 )
 
 __all__ = [
@@ -22,4 +27,9 @@ __all__ = [
     "run_reconstruction",
     "extract_embeddings_batch",
     "prepare_input",
+    # New functions for cognition variance analysis
+    "extract_full_embeddings",
+    "extract_reconstruction",
+    "extract_all_features",
+    "extract_all_features_batch",
 ]
