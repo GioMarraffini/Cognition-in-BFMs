@@ -248,11 +248,11 @@ def extract_reconstruction(
     with torch.no_grad():
         out = model(pixel_values=x, output_hidden_states=True, return_dict=True)
     
-    # Extract reconstruction - logits has shape [1, 3, H, W]
-    recon_raw = out.logits.cpu().numpy()[0]  # [3, H, W]
+    # Extract reconstruction - logits has shape [1, 424, 200]
+    recon_raw = out.logits.cpu().numpy()[0]  # [424, 200]
     
-    # Crop to original 424x200 (take first channel, crop spatial dims)
-    recon_424 = recon_raw[0, :424, :200]  # [424, 200]
+    # Already in correct shape
+    recon_424 = recon_raw[:424, :200]  # [424, 200] (crop if needed)
     
     result = {
         "input": data_200,
