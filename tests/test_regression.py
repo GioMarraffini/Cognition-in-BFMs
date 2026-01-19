@@ -199,6 +199,163 @@ class TestPreprocessingFunctions:
         np.testing.assert_allclose(means, np.zeros(424), atol=1e-6)
         np.testing.assert_allclose(stds, np.ones(424), atol=1e-6)
 
+    def test_apply_robust_scaling_with_population_stats(self):
+        """Test robust scaling with pre-computed population statistics."""
+        from preprocessing.brainlm import apply_robust_scaling
+
+        np.random.seed(42)
+        data = np.random.randn(424, 200) * 10 + 50
+
+        # Simulate population statistics
+        global_median = np.full(424, 50.0)
+        global_iqr = np.full(424, 13.5)  # ~IQR for standard normal * 10
+
+        scaled = apply_robust_scaling(data, global_median, global_iqr)
+
+        # Data should be roughly centered around 0
+        assert abs(scaled.mean()) < 1.0
+        assert scaled.shape == (424, 200)
+
+    def test_apply_robust_scaling_fallback(self):
+        """Test robust scaling without population stats (per-sample)."""
+        from preprocessing.brainlm import apply_robust_scaling
+
+        np.random.seed(42)
+        data = np.random.randn(424, 200) * 10 + 50
+
+        # No global stats - should use per-sample
+        scaled = apply_robust_scaling(data)
+
+        # Each parcel should be roughly centered
+        parcel_medians = np.median(scaled, axis=1)
+        np.testing.assert_allclose(parcel_medians, np.zeros(424), atol=0.1)
+
+    def test_validate_data_correct_shape(self):
+        """Test validate_data accepts correct data."""
+        from preprocessing.brainlm import validate_data
+
+        valid_data = np.random.randn(424, 200)
+        is_valid, msg = validate_data(valid_data)
+
+        assert is_valid
+        assert msg == "Valid"
+
+    def test_validate_data_rejects_wrong_dimensions(self):
+        """Test validate_data rejects 3D arrays."""
+        from preprocessing.brainlm import validate_data
+
+        invalid_data = np.random.randn(424, 200, 3)
+        is_valid, msg = validate_data(invalid_data)
+
+        assert not is_valid
+        assert "2D" in msg
+
+    def test_validate_data_rejects_nan(self):
+        """Test validate_data rejects data with NaN values."""
+        from preprocessing.brainlm import validate_data
+
+        data_with_nan = np.random.randn(424, 200)
+        data_with_nan[0, 0] = np.nan
+        is_valid, msg = validate_data(data_with_nan)
+
+        assert not is_valid
+        assert "NaN" in msg
+
+    def test_extract_timepoints_center_method(self):
+        """Test that center method extracts from middle."""
+        from preprocessing.brainlm import extract_timepoints
+
+        # Create data where we can verify center extraction
+        data = np.zeros((10, 300))
+        data[:, 50:250] = 1.0  # Mark middle 200 timepoints
+
+        result = extract_timepoints(data, n_timepoints=200, method="center")
+
+        # Center extraction from 300 -> 200 should start at index 50
+        assert result.shape == (10, 200)
+        assert result.sum() == 10 * 200  # All ones from middle section
+
+
+class TestPredictionMetrics:
+    """Tests for prediction evaluation metrics."""
+
+    def test_evaluate_prediction_perfect(self):
+        """Test evaluate_prediction with perfect predictions."""
+        from utils.metrics import evaluate_prediction
+
+        np.random.seed(42)
+        y_true = np.random.randn(50)
+        y_pred = y_true.copy()
+
+        metrics = evaluate_prediction(y_true, y_pred)
+
+        assert metrics.r2 == 1.0
+        assert abs(metrics.pearson_r - 1.0) < 1e-10
+        assert abs(metrics.spearman_rho - 1.0) < 1e-10
+        assert metrics.mae == 0.0
+
+    def test_evaluate_prediction_returns_correct_types(self):
+        """Test that evaluate_prediction returns float metrics."""
+        from utils.metrics import evaluate_prediction
+
+        np.random.seed(42)
+        y_true = np.random.randn(50)
+        y_pred = y_true + np.random.randn(50) * 0.5
+
+        metrics = evaluate_prediction(y_true, y_pred)
+
+        assert isinstance(metrics.r2, float)
+        assert isinstance(metrics.pearson_r, float)
+        assert isinstance(metrics.spearman_rho, float)
+        assert isinstance(metrics.mae, float)
+
+    def test_log_cholesky_distance_identical_matrices(self):
+        """Test log-Cholesky distance is zero for identical matrices."""
+        from utils.metrics import log_cholesky_distance
+
+        np.random.seed(42)
+        # Create a valid SPD matrix
+        A = np.random.randn(50, 50)
+        M = A @ A.T + np.eye(50) * 0.1
+
+        dist = log_cholesky_distance(M, M)
+
+        assert dist < 1e-10
+
+    def test_log_cholesky_distance_symmetric(self):
+        """Test log-Cholesky distance is symmetric."""
+        from utils.metrics import log_cholesky_distance
+
+        np.random.seed(42)
+        A = np.random.randn(30, 30)
+        M1 = A @ A.T + np.eye(30) * 0.1
+        B = np.random.randn(30, 30)
+        M2 = B @ B.T + np.eye(30) * 0.1
+
+        dist1 = log_cholesky_distance(M1, M2)
+        dist2 = log_cholesky_distance(M2, M1)
+
+        np.testing.assert_allclose(dist1, dist2, rtol=1e-10)
+
+    def test_aggregate_metrics(self):
+        """Test aggregate_metrics computes correct statistics."""
+        from utils.metrics import ReconstructionMetrics, aggregate_metrics
+
+        results = [
+            ReconstructionMetrics(mse=1.0, mae=0.8, fc_correlation=0.5, riemannian_distance=10.0),
+            ReconstructionMetrics(mse=2.0, mae=1.2, fc_correlation=0.6, riemannian_distance=12.0),
+            ReconstructionMetrics(mse=1.5, mae=1.0, fc_correlation=0.55, riemannian_distance=11.0),
+        ]
+
+        agg = aggregate_metrics(results)
+
+        assert "mse" in agg
+        assert "mae" in agg
+        np.testing.assert_allclose(agg["mse"]["mean"], 1.5)
+        np.testing.assert_allclose(agg["mse"]["median"], 1.5)
+        assert agg["mse"]["min"] == 1.0
+        assert agg["mse"]["max"] == 2.0
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

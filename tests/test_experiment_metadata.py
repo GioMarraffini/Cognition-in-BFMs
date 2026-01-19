@@ -17,12 +17,15 @@ from pathlib import Path
 import pytest
 
 # Required fields in metadata.json for reproducibility
+# Note: n_subjects can be replaced by (n_train AND n_test) for train/test split experiments
 REQUIRED_METADATA_FIELDS = {
     "timestamp",  # When the experiment was run
     "model",  # Which model was used
     "data_dir",  # Where data came from
-    "n_subjects",  # How many subjects
 }
+
+# Subject count fields - metadata must have EITHER n_subjects OR (n_train AND n_test)
+SUBJECT_COUNT_FIELDS = {"n_subjects", "n_train", "n_test"}
 
 # Optional but recommended fields
 RECOMMENDED_METADATA_FIELDS = {
@@ -93,6 +96,14 @@ class TestExperimentMetadata:
                 missing = REQUIRED_METADATA_FIELDS - set(metadata.keys())
                 if missing:
                     errors.append(f"{exp_dir.name}: missing {missing}")
+
+                # Check for subject count: either n_subjects OR (n_train AND n_test)
+                has_n_subjects = "n_subjects" in metadata
+                has_train_test = "n_train" in metadata and "n_test" in metadata
+                if not has_n_subjects and not has_train_test:
+                    errors.append(
+                        f"{exp_dir.name}: missing subject count (need n_subjects or n_train+n_test)"
+                    )
             except json.JSONDecodeError as e:
                 errors.append(f"{exp_dir.name}: invalid JSON - {e}")
 
