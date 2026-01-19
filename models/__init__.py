@@ -12,15 +12,15 @@ Usage:
 """
 
 from .brainlm import (
-    load_model,
     extract_cls_embedding,
-    run_reconstruction,
     extract_embeddings_batch,
+    load_model,
+    run_reconstruction,
 )
 
 __all__ = [
     "load_model",
     "extract_cls_embedding",
-    "run_reconstruction", 
+    "run_reconstruction",
     "extract_embeddings_batch",
 ]

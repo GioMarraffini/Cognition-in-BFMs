@@ -20,11 +20,10 @@ from .cognition import (
     COGNITIVE_VARS,
     load_participants,
 )
-
 from .metrics import (
+    ReconstructionMetrics,
     compute_fc,
     evaluate_reconstruction,
-    ReconstructionMetrics,
 )
 
 __all__ = [
