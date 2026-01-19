@@ -17,10 +17,10 @@ Preprocessing functions for BrainLM as described in the paper:
 ## Usage:
 
     from preprocessing.brainlm import preprocess_single, parcellate_to_a424
-    
+
     # Single file
     data = preprocess_single(nifti_path, atlas_path)
-    
+
     # Batch processing
     from preprocessing.brainlm import preprocess_directory
     results = preprocess_directory(input_dir, output_dir)
@@ -52,24 +52,24 @@ __all__ = [
 ]
 
 from .preprocess_fmri_for_brainlm import (
-    # Step 1
-    apply_motion_correction,
-    apply_spatial_normalization,
-    apply_temporal_filtering,
     # Step 2
     apply_ica_denoising,
-    # Step 3
-    parcellate_to_a424,
+    # Step 1
+    apply_motion_correction,
     # Step 4
     apply_robust_scaling,
+    apply_spatial_normalization,
+    apply_temporal_filtering,
     apply_zscore_normalization,
-    # Step 5
-    extract_timepoints,
-    # Pipelines
-    preprocess_single,
-    preprocess_directory,
     # Utilities
     compute_population_statistics,
+    # Step 5
+    extract_timepoints,
     load_preprocessed,
+    # Step 3
+    parcellate_to_a424,
+    preprocess_directory,
+    # Pipelines
+    preprocess_single,
     validate_data,
 )
