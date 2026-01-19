@@ -14,3 +14,7 @@ output/
 models/brainlm_mae/
 
 docs/
+
+.vscode/
+
+.pytest_cache/

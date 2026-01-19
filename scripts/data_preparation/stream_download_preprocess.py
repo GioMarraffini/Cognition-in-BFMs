@@ -2,7 +2,7 @@
 """
 Streaming download + preprocess pipeline for AOMIC dataset.
 
-Downloads one subject at a time, preprocesses to A424 parcels, then deletes 
+Downloads one subject at a time, preprocesses to A424 parcels, then deletes
 the raw fMRI to save disk space.
 
 Storage: ~332KB per subject (vs ~200MB raw)
@@ -10,21 +10,22 @@ Time: ~2 min preprocessing per subject
 """
 
 import argparse
-import subprocess
 import pickle
+import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def get_all_subjects_with_cognition(data_dir: str) -> list:
     """Get all subjects that have cognition scores."""
     train_scores = pd.read_csv(Path(data_dir) / "train" / "cognition_scores.csv")
     test_scores = pd.read_csv(Path(data_dir) / "test" / "cognition_scores.csv")
-    
-    all_subjects = list(train_scores['participant_id']) + list(test_scores['participant_id'])
+
+    all_subjects = list(train_scores["participant_id"]) + list(test_scores["participant_id"])
     return all_subjects
 
 
@@ -33,13 +34,13 @@ def get_processed_subjects(processed_dir: str) -> set:
     processed_path = Path(processed_dir)
     if not processed_path.exists():
         return set()
-    
+
     processed = set()
     for npy_file in processed_path.rglob("*.npy"):
         # Extract subject ID from filename like "sub-0053_a424.npy"
         subject_id = npy_file.stem.replace("_a424", "")
         processed.add(subject_id)
-    
+
     return processed
 
 
@@ -47,46 +48,54 @@ def download_subject(subject_id: str, dataset_dir: str) -> Path:
     """Download fMRI for a single subject using datalad."""
     # Path to MNI-space preprocessed fMRI
     fmri_file = f"derivatives/fmriprep/{subject_id}/func/{subject_id}_task-moviewatching_space-MNI152NLin2009cAsym_desc-preproc_bold.nii.gz"
-    
+
     print(f"   📥 Downloading {subject_id}...")
-    
+
     result = subprocess.run(
         ["datalad", "get", fmri_file],
         cwd=dataset_dir,
         capture_output=True,
         text=True,
-        timeout=600  # 10 min timeout
+        timeout=600,  # 10 min timeout
     )
-    
+
     if result.returncode != 0:
         raise RuntimeError(f"Download failed: {result.stderr[:200]}")
-    
+
     return Path(dataset_dir) / fmri_file
 
 
 def preprocess_subject(nifti_path: Path, atlas_path: str, global_stats: dict = None) -> np.ndarray:
     """Preprocess fMRI to A424 parcels using centralized preprocessing module."""
     # Import from preprocessing module (no duplication)
-    from preprocessing.brainlm import parcellate_to_a424, apply_robust_scaling, apply_zscore_normalization, extract_timepoints
-    
+    from preprocessing.brainlm import (
+        apply_robust_scaling,
+        apply_zscore_normalization,
+        extract_timepoints,
+        parcellate_to_a424,
+    )
+
     print("   🔄 Preprocessing...")
-    
+
     # Find and load confounds file (motion parameters)
     confounds_path = nifti_path.parent / nifti_path.name.replace(
         "desc-preproc_bold.nii.gz", "desc-confounds_regressors.tsv"
     )
-    
+
     confounds = None
     if confounds_path.exists():
-        conf_df = pd.read_csv(confounds_path, sep='\t')
-        confound_cols = [c for c in ['trans_x', 'trans_y', 'trans_z', 'rot_x', 'rot_y', 'rot_z'] 
-                        if c in conf_df.columns]
+        conf_df = pd.read_csv(confounds_path, sep="\t")
+        confound_cols = [
+            c
+            for c in ["trans_x", "trans_y", "trans_z", "rot_x", "rot_y", "rot_z"]
+            if c in conf_df.columns
+        ]
         if confound_cols:
             confounds = conf_df[confound_cols].fillna(0).values
-    
+
     # Parcellation with temporal filtering and confound regression
     data = parcellate_to_a424(
-        str(nifti_path), 
+        str(nifti_path),
         atlas_path=atlas_path,
         detrend=True,
         low_pass=0.1,
@@ -94,16 +103,16 @@ def preprocess_subject(nifti_path: Path, atlas_path: str, global_stats: dict = N
         t_r=2.2,
         confounds=confounds,
     )
-    
+
     # Scaling
     if global_stats is not None:
-        data = apply_robust_scaling(data, global_stats['median'], global_stats['iqr'])
+        data = apply_robust_scaling(data, global_stats["median"], global_stats["iqr"])
     else:
         data = apply_zscore_normalization(data)
-    
+
     # Extract 200 timepoints
     data = extract_timepoints(data, n_timepoints=200, method="center")
-    
+
     return data
 
 
@@ -111,35 +120,35 @@ def delete_downloaded_data(subject_id: str, dataset_dir: str):
     """Remove downloaded fMRI data to free space."""
     # Drop the file from datalad cache
     fmri_file = f"derivatives/fmriprep/{subject_id}/func/{subject_id}_task-moviewatching_space-MNI152NLin2009cAsym_desc-preproc_bold.nii.gz"
-    
+
     print("   🗑️  Cleaning up...")
-    
+
     subprocess.run(
         ["datalad", "drop", fmri_file, "--nocheck"],
         cwd=dataset_dir,
         capture_output=True,
-        timeout=60
+        timeout=60,
     )
 
 
 def process_single_subject(args):
     """Process a single subject (for parallel execution)."""
     subject_id, split, dataset_dir, atlas_path, global_stats, output_dir = args
-    
+
     try:
         # Step 1: Download
         nifti_path = download_subject(subject_id, dataset_dir)
-        
+
         # Step 2: Preprocess
         data = preprocess_subject(nifti_path, atlas_path, global_stats)
-        
+
         # Step 3: Save
         out_file = Path(output_dir) / split / f"{subject_id}_a424.npy"
         np.save(out_file, data)
-        
+
         # Step 4: Delete raw data
         delete_downloaded_data(subject_id, dataset_dir)
-        
+
         return True, subject_id, data.shape, None
     except Exception as e:
         # Try to clean up anyway
@@ -162,7 +171,7 @@ def stream_download_preprocess(
 ):
     """
     Stream download and preprocess subjects with parallel workers.
-    
+
     Args:
         data_dir: Where to save processed data
         dataset_dir: Path to datalad AOMIC dataset
@@ -181,152 +190,172 @@ def stream_download_preprocess(
     print(f"Dataset: {dataset_dir}")
     print(f"Output: {data_dir}")
     print("=" * 70)
-    
+
     data_path = Path(data_dir)
     dataset_path = Path(dataset_dir)
-    
+
     # Load global statistics for robust scaling
     global_stats = None
     if global_stats_file and Path(global_stats_file).exists():
-        with open(global_stats_file, 'rb') as f:
+        with open(global_stats_file, "rb") as f:
             global_stats = pickle.load(f)
         print(f"\n✓ Loaded global statistics from {global_stats_file}")
     else:
         print("\n⚠️  No global statistics - using per-subject z-score normalization")
-    
+
     # Load cognition scores to know which subjects to process
     train_scores = pd.read_csv(data_path / "train" / "cognition_scores.csv")
     test_scores = pd.read_csv(data_path / "test" / "cognition_scores.csv")
-    
+
     # Get already processed subjects
     processed_dir = data_path / "processed"
     processed_dir.mkdir(parents=True, exist_ok=True)
     (processed_dir / "train").mkdir(exist_ok=True)
     (processed_dir / "test").mkdir(exist_ok=True)
-    
+
     already_processed = get_processed_subjects(str(processed_dir))
     print(f"\n📊 Already processed: {len(already_processed)} subjects")
-    
+
     # Select subjects to process (spread across cognition range)
-    train_sorted = train_scores.sort_values('cognition_factor')
-    test_sorted = test_scores.sort_values('cognition_factor')
-    
+    train_sorted = train_scores.sort_values("cognition_factor")
+    test_sorted = test_scores.sort_values("cognition_factor")
+
     # Get evenly spaced subjects across cognition range
-    train_indices = np.linspace(0, len(train_sorted)-1, min(n_train, len(train_sorted)), dtype=int)
-    test_indices = np.linspace(0, len(test_sorted)-1, min(n_test, len(test_sorted)), dtype=int)
-    
-    train_subjects = train_sorted.iloc[train_indices]['participant_id'].tolist()
-    test_subjects = test_sorted.iloc[test_indices]['participant_id'].tolist()
-    
+    train_indices = np.linspace(
+        0, len(train_sorted) - 1, min(n_train, len(train_sorted)), dtype=int
+    )
+    test_indices = np.linspace(0, len(test_sorted) - 1, min(n_test, len(test_sorted)), dtype=int)
+
+    train_subjects = train_sorted.iloc[train_indices]["participant_id"].tolist()
+    test_subjects = test_sorted.iloc[test_indices]["participant_id"].tolist()
+
     # Filter out already processed
     if skip_existing:
         train_subjects = [s for s in train_subjects if s not in already_processed]
         test_subjects = [s for s in test_subjects if s not in already_processed]
-    
+
     print(f"   Training subjects to process: {len(train_subjects)}")
     print(f"   Test subjects to process: {len(test_subjects)}")
-    
+
     total = len(train_subjects) + len(test_subjects)
     if total == 0:
         print("\n✓ All requested subjects already processed!")
         return
-    
+
     # Estimate time
     est_minutes = total * 2  # ~2 min per subject
     print(f"\n⏱️  Estimated time: {est_minutes // 60}h {est_minutes % 60}m")
-    
+
     # Process subjects (parallel or sequential)
     success_count = 0
     fail_count = 0
     start_time = datetime.now()
-    
+
     # Prepare tasks for all subjects
     tasks = []
     for split, subjects in [("train", train_subjects), ("test", test_subjects)]:
         for subject_id in subjects:
-            tasks.append((subject_id, split, str(dataset_path), atlas_path, global_stats, str(processed_dir)))
-    
+            tasks.append(
+                (subject_id, split, str(dataset_path), atlas_path, global_stats, str(processed_dir))
+            )
+
     print(f"\n⏱️  Starting processing with {n_workers} worker(s)...")
-    
+
     if n_workers == 1:
         # Sequential processing
         for i, task in enumerate(tasks, 1):
             subject_id, split = task[0], task[1]
             print(f"\n[{i}/{len(tasks)}] {subject_id} ({split})")
-            
+
             success, subj_id, shape, error = process_single_subject(task)
-            
+
             if success:
                 print(f"   ✓ Saved: {subj_id}_a424.npy - shape {shape}")
                 success_count += 1
             else:
                 print(f"   ✗ Failed: {error}")
                 fail_count += 1
-            
+
             # Progress update
             elapsed = (datetime.now() - start_time).total_seconds() / 60
             rate = success_count / elapsed if elapsed > 0 else 0
             remaining = (len(tasks) - i) / rate if rate > 0 else 0
-            print(f"   📊 Progress: {success_count}/{len(tasks)} done, ~{remaining:.0f} min remaining")
+            print(
+                f"   📊 Progress: {success_count}/{len(tasks)} done, ~{remaining:.0f} min remaining"
+            )
     else:
         # Parallel processing
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
             futures = {executor.submit(process_single_subject, task): task for task in tasks}
-            
+
             for i, future in enumerate(as_completed(futures), 1):
                 task = futures[future]
                 subject_id, split = task[0], task[1]
-                
+
                 success, subj_id, shape, error = future.result()
-                
+
                 if success:
                     print(f"✓ [{i}/{len(tasks)}] {subj_id} ({split}) - shape {shape}")
                     success_count += 1
                 else:
                     print(f"✗ [{i}/{len(tasks)}] {subj_id} ({split}) - {error}")
                     fail_count += 1
-                
+
                 # Progress update
                 elapsed = (datetime.now() - start_time).total_seconds() / 60
                 rate = success_count / elapsed if elapsed > 0 else 0
                 remaining = (len(tasks) - i) / rate if rate > 0 else 0
                 print(f"   📊 {success_count} done, ~{remaining:.0f} min remaining")
-    
+
     # Summary
     elapsed = (datetime.now() - start_time).total_seconds() / 60
     print("\n" + "=" * 70)
     print("SUMMARY")
     print("=" * 70)
     print(f"Processed: {success_count} succeeded, {fail_count} failed")
-    print(f"Time: {elapsed:.1f} minutes ({elapsed/60:.1f} hours)")
-    print(f"Rate: {success_count/elapsed:.2f} subjects/minute")
-    
+    print(f"Time: {elapsed:.1f} minutes ({elapsed / 60:.1f} hours)")
+    print(f"Rate: {success_count / elapsed:.2f} subjects/minute")
+
     # Count total processed
     final_processed = get_processed_subjects(str(processed_dir))
-    train_processed = len([s for s in final_processed if (processed_dir / "train" / f"{s}_a424.npy").exists()])
-    test_processed = len([s for s in final_processed if (processed_dir / "test" / f"{s}_a424.npy").exists()])
-    
+    train_processed = len(
+        [s for s in final_processed if (processed_dir / "train" / f"{s}_a424.npy").exists()]
+    )
+    test_processed = len(
+        [s for s in final_processed if (processed_dir / "test" / f"{s}_a424.npy").exists()]
+    )
+
     print("\nTotal processed files:")
     print(f"   Train: {train_processed}")
     print(f"   Test: {test_processed}")
-    
+
     # Disk usage
     total_size = sum(f.stat().st_size for f in processed_dir.rglob("*.npy"))
-    print(f"   Total storage: {total_size / (1024*1024):.1f} MB")
+    print(f"   Total storage: {total_size / (1024 * 1024):.1f} MB")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Streaming download and preprocess for AOMIC (BrainLM-style)")
+    parser = argparse.ArgumentParser(
+        description="Streaming download and preprocess for AOMIC (BrainLM-style)"
+    )
     parser.add_argument("--data-dir", "-d", default="data/aomic_cognition", help="Output directory")
-    parser.add_argument("--dataset-dir", default="data/openneuro_cog/ds003097", help="Datalad dataset path")
+    parser.add_argument(
+        "--dataset-dir", default="data/openneuro_cog/ds003097", help="Datalad dataset path"
+    )
     parser.add_argument("--n-train", type=int, default=150, help="Number of training subjects")
     parser.add_argument("--n-test", type=int, default=30, help="Number of test subjects")
-    parser.add_argument("--n-workers", "-w", type=int, default=1, help="Number of parallel workers (1=sequential)")
-    parser.add_argument("--no-skip", action="store_true", help="Don't skip already processed subjects")
-    parser.add_argument("--global-stats", default=None, help="Path to global statistics file (.pkl)")
-    
+    parser.add_argument(
+        "--n-workers", "-w", type=int, default=1, help="Number of parallel workers (1=sequential)"
+    )
+    parser.add_argument(
+        "--no-skip", action="store_true", help="Don't skip already processed subjects"
+    )
+    parser.add_argument(
+        "--global-stats", default=None, help="Path to global statistics file (.pkl)"
+    )
+
     args = parser.parse_args()
-    
+
     stream_download_preprocess(
         data_dir=args.data_dir,
         dataset_dir=args.dataset_dir,
@@ -340,4 +369,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
