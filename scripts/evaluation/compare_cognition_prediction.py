@@ -3,11 +3,13 @@
 Compare cognition prediction methods: FC baseline vs BrainLM embeddings vs reconstructed FC.
 
 This script implements the comparison described in Ooi et al. (2022) NeuroImage paper:
-- Baseline: Functional Connectivity from input (424x424 FC matrix from 424x200 input)
-- BrainLM: CLS token embeddings
-- Reconstructed: FC from BrainLM reconstruction (424x424 FC from reconstructed 424x200)
+- Method 1: FC from Input (424x424 FC matrix) - BASELINE
+- Method 2: BrainLM CLS token embeddings (1280 dims)
+- Method 3: BrainLM full patch embeddings (961x1280 -> mean pooled to 1280)
+- Method 4: FC from BrainLM reconstruction (424x424 FC)
 
 All methods use Kernel Ridge Regression (KRR) following the paper methodology.
+Hyperparameter selection via nested CV on training set only (no data leakage).
 
 Input: brainlm_features.npz (from extract_all_features.py)
 Output: Comparison results with R², Pearson r, and statistical tests
@@ -17,6 +19,7 @@ Usage:
 """
 
 import argparse
+import csv
 import json
 import sys
 from datetime import datetime
@@ -301,17 +304,20 @@ def run_comparison(data_path: Path, output_dir: Path) -> dict:
     train_subjects = features['train_subjects']
     train_inputs = features['train_inputs']
     train_cls = features['train_cls_embeddings']
+    train_patches = features['train_patch_embeddings']  # [n_subjects, 961, 1280]
     train_recons = features['train_reconstructions']
     
     test_subjects = features['test_subjects']
     test_inputs = features['test_inputs']
     test_cls = features['test_cls_embeddings']
+    test_patches = features['test_patch_embeddings']
     test_recons = features['test_reconstructions']
     
     print(f"Train subjects: {len(train_subjects)}")
     print(f"Test subjects: {len(test_subjects)}")
     print(f"Input shape: {train_inputs.shape}")
     print(f"CLS embedding shape: {train_cls.shape}")
+    print(f"Patch embedding shape: {train_patches.shape}")
     print(f"Reconstruction shape: {train_recons.shape}")
     
     # Compute FC matrices
@@ -324,6 +330,12 @@ def run_comparison(data_path: Path, output_dir: Path) -> dict:
     
     print(f"FC features shape: {train_fc_input.shape}")
     
+    # Mean-pool patch embeddings: [n_subjects, 961, 1280] -> [n_subjects, 1280]
+    print("Mean-pooling patch embeddings...")
+    train_patches_pooled = train_patches.mean(axis=1)
+    test_patches_pooled = test_patches.mean(axis=1)
+    print(f"Pooled patch shape: {train_patches_pooled.shape}")
+    
     # Match with cognition scores
     print("\nMatching with cognition scores...")
     
@@ -333,9 +345,13 @@ def run_comparison(data_path: Path, output_dir: Path) -> dict:
     X_test_fc, y_test, test_matched = match_subjects(
         test_subjects, test_fc_input, data['test_scores'])
     
-    # For CLS embeddings (match same subjects)
+    # For CLS embeddings
     X_train_cls, _, _ = match_subjects(train_subjects, train_cls, data['train_scores'])
     X_test_cls, _, _ = match_subjects(test_subjects, test_cls, data['test_scores'])
+    
+    # For pooled patch embeddings
+    X_train_patches, _, _ = match_subjects(train_subjects, train_patches_pooled, data['train_scores'])
+    X_test_patches, _, _ = match_subjects(test_subjects, test_patches_pooled, data['test_scores'])
     
     # For reconstructed FC
     X_train_recon, _, _ = match_subjects(train_subjects, train_fc_recon, data['train_scores'])
@@ -349,11 +365,14 @@ def run_comparison(data_path: Path, output_dir: Path) -> dict:
     # Method 1: FC from Input (Baseline)
     print("\n" + "=" * 60)
     print("METHOD 1: FC from Input (Baseline)")
+    print(f"  Features: {X_train_fc.shape[1]} (lower triangle of 424x424 FC)")
     print("=" * 60)
     
     results['fc_input'] = train_test_split_predict(
         X_train_fc, y_train, X_test_fc, y_test
     )
+    results['fc_input']['feature_dim'] = X_train_fc.shape[1]
+    print(f"  Best alpha: {results['fc_input']['best_alpha']}")
     print(f"  R² = {results['fc_input']['r2']:.4f}")
     print(f"  Pearson r = {results['fc_input']['pearson_r']:.4f} (p={results['fc_input']['pearson_p']:.2e})")
     print(f"  Spearman ρ = {results['fc_input']['spearman_rho']:.4f}")
@@ -361,36 +380,62 @@ def run_comparison(data_path: Path, output_dir: Path) -> dict:
     # Method 2: BrainLM CLS Embeddings
     print("\n" + "=" * 60)
     print("METHOD 2: BrainLM CLS Embeddings")
+    print(f"  Features: {X_train_cls.shape[1]} (CLS token)")
     print("=" * 60)
     
     results['cls_embedding'] = train_test_split_predict(
         X_train_cls, y_train, X_test_cls, y_test
     )
+    results['cls_embedding']['feature_dim'] = X_train_cls.shape[1]
+    print(f"  Best alpha: {results['cls_embedding']['best_alpha']}")
     print(f"  R² = {results['cls_embedding']['r2']:.4f}")
     print(f"  Pearson r = {results['cls_embedding']['pearson_r']:.4f} (p={results['cls_embedding']['pearson_p']:.2e})")
     print(f"  Spearman ρ = {results['cls_embedding']['spearman_rho']:.4f}")
     
-    # Method 3: FC from Reconstruction
+    # Method 3: BrainLM Full Patch Embeddings (mean-pooled)
     print("\n" + "=" * 60)
-    print("METHOD 3: FC from BrainLM Reconstruction")
+    print("METHOD 3: BrainLM Patch Embeddings (mean-pooled)")
+    print(f"  Features: {X_train_patches.shape[1]} (mean of 961 patches)")
+    print("=" * 60)
+    
+    results['patch_embedding'] = train_test_split_predict(
+        X_train_patches, y_train, X_test_patches, y_test
+    )
+    results['patch_embedding']['feature_dim'] = X_train_patches.shape[1]
+    print(f"  Best alpha: {results['patch_embedding']['best_alpha']}")
+    print(f"  R² = {results['patch_embedding']['r2']:.4f}")
+    print(f"  Pearson r = {results['patch_embedding']['pearson_r']:.4f} (p={results['patch_embedding']['pearson_p']:.2e})")
+    print(f"  Spearman ρ = {results['patch_embedding']['spearman_rho']:.4f}")
+    
+    # Method 4: FC from Reconstruction
+    print("\n" + "=" * 60)
+    print("METHOD 4: FC from BrainLM Reconstruction")
+    print(f"  Features: {X_train_recon.shape[1]} (lower triangle of 424x424 FC)")
     print("=" * 60)
     
     results['fc_reconstruction'] = train_test_split_predict(
         X_train_recon, y_train, X_test_recon, y_test
     )
+    results['fc_reconstruction']['feature_dim'] = X_train_recon.shape[1]
+    print(f"  Best alpha: {results['fc_reconstruction']['best_alpha']}")
     print(f"  R² = {results['fc_reconstruction']['r2']:.4f}")
     print(f"  Pearson r = {results['fc_reconstruction']['pearson_r']:.4f} (p={results['fc_reconstruction']['pearson_p']:.2e})")
     print(f"  Spearman ρ = {results['fc_reconstruction']['spearman_rho']:.4f}")
+    
+    # Store sample sizes for metadata
+    results['n_train'] = len(train_matched)
+    results['n_test'] = len(test_matched)
     
     return results
 
 
 def plot_comparison(results: dict, output_path: Path):
-    """Create comparison visualization."""
-    methods = ['fc_input', 'cls_embedding', 'fc_reconstruction']
-    labels = ['FC (Input)\nBaseline', 'BrainLM\nCLS Embedding', 'FC (Reconstruction)']
+    """Create comparison visualization for 4 methods."""
+    methods = ['fc_input', 'cls_embedding', 'patch_embedding', 'fc_reconstruction']
+    labels = ['FC (Input)\nBaseline', 'BrainLM\nCLS Token', 'BrainLM\nPatch Mean', 'FC\n(Reconstruction)']
+    colors = ['steelblue', 'coral', 'orchid', 'seagreen']
     
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    fig, axes = plt.subplots(2, 4, figsize=(18, 10))
     
     # Top row: Scatter plots
     for i, (method, label) in enumerate(zip(methods, labels)):
@@ -398,58 +443,80 @@ def plot_comparison(results: dict, output_path: Path):
         y_true = results[method]['y_true']
         y_pred = results[method]['y_pred']
         
-        ax.scatter(y_true, y_pred, alpha=0.6, s=50)
+        ax.scatter(y_true, y_pred, alpha=0.6, s=40, c=colors[i])
         lims = [min(y_true.min(), y_pred.min()), max(y_true.max(), y_pred.max())]
-        ax.plot(lims, lims, 'r--', lw=2)
-        ax.set_xlabel('True Cognition', fontsize=11)
-        ax.set_ylabel('Predicted Cognition', fontsize=11)
-        ax.set_title(f"{label}\nr = {results[method]['pearson_r']:.3f}, R² = {results[method]['r2']:.3f}", 
-                    fontsize=12)
+        ax.plot(lims, lims, 'k--', lw=1.5, alpha=0.7)
+        ax.set_xlabel('True Cognition', fontsize=10)
+        ax.set_ylabel('Predicted Cognition', fontsize=10)
+        ax.set_title(f"{label}\nr={results[method]['pearson_r']:.3f}, R²={results[method]['r2']:.3f}", 
+                    fontsize=11)
         ax.grid(True, alpha=0.3)
     
-    # Bottom row: Bar chart comparison
+    # Bottom left: Pearson r comparison
     ax = axes[1, 0]
     r_values = [results[m]['pearson_r'] for m in methods]
-    bars = ax.bar(range(len(methods)), r_values, color=['steelblue', 'coral', 'seagreen'])
+    bars = ax.bar(range(len(methods)), r_values, color=colors)
     ax.set_xticks(range(len(methods)))
-    ax.set_xticklabels(labels, fontsize=10)
+    ax.set_xticklabels(['FC\nInput', 'CLS', 'Patch', 'FC\nRecon'], fontsize=9)
     ax.set_ylabel('Pearson r', fontsize=11)
-    ax.set_title('Prediction Performance Comparison', fontsize=12)
-    ax.set_ylim(0, max(r_values) * 1.2)
+    ax.set_title('Correlation with True Cognition', fontsize=11)
+    ax.set_ylim(0, max(max(r_values) * 1.25, 0.1))
     for bar, val in zip(bars, r_values):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
-                f'{val:.3f}', ha='center', fontsize=10)
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005, 
+                f'{val:.3f}', ha='center', fontsize=9)
+    ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
     
+    # Bottom middle-left: R² comparison
     ax = axes[1, 1]
     r2_values = [results[m]['r2'] for m in methods]
-    bars = ax.bar(range(len(methods)), r2_values, color=['steelblue', 'coral', 'seagreen'])
+    bars = ax.bar(range(len(methods)), r2_values, color=colors)
     ax.set_xticks(range(len(methods)))
-    ax.set_xticklabels(labels, fontsize=10)
+    ax.set_xticklabels(['FC\nInput', 'CLS', 'Patch', 'FC\nRecon'], fontsize=9)
     ax.set_ylabel('R²', fontsize=11)
-    ax.set_title('Variance Explained', fontsize=12)
-    ax.set_ylim(min(0, min(r2_values) * 1.2), max(r2_values) * 1.2)
+    ax.set_title('Variance Explained', fontsize=11)
+    y_min = min(min(r2_values) * 1.2, 0) if min(r2_values) < 0 else 0
+    ax.set_ylim(y_min, max(max(r2_values) * 1.25, 0.1))
     for bar, val in zip(bars, r2_values):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
-                f'{val:.3f}', ha='center', fontsize=10)
+        y_pos = bar.get_height() + 0.005 if val >= 0 else bar.get_height() - 0.02
+        ax.text(bar.get_x() + bar.get_width()/2, y_pos, f'{val:.3f}', ha='center', fontsize=9)
+    ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
     
-    # Summary text
+    # Bottom middle-right: Spearman comparison
     ax = axes[1, 2]
+    rho_values = [results[m]['spearman_rho'] for m in methods]
+    bars = ax.bar(range(len(methods)), rho_values, color=colors)
+    ax.set_xticks(range(len(methods)))
+    ax.set_xticklabels(['FC\nInput', 'CLS', 'Patch', 'FC\nRecon'], fontsize=9)
+    ax.set_ylabel('Spearman ρ', fontsize=11)
+    ax.set_title('Rank Correlation', fontsize=11)
+    ax.set_ylim(0, max(max(rho_values) * 1.25, 0.1))
+    for bar, val in zip(bars, rho_values):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005, 
+                f'{val:.3f}', ha='center', fontsize=9)
+    ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+    
+    # Bottom right: Summary text
+    ax = axes[1, 3]
     ax.axis('off')
-    summary = "Summary:\n\n"
-    summary += f"FC Baseline:     r = {results['fc_input']['pearson_r']:.3f}\n"
-    summary += f"BrainLM CLS:     r = {results['cls_embedding']['pearson_r']:.3f}\n"
-    summary += f"FC Recon:        r = {results['fc_reconstruction']['pearson_r']:.3f}\n\n"
     
-    # Compare to baseline
     baseline_r = results['fc_input']['pearson_r']
-    cls_diff = results['cls_embedding']['pearson_r'] - baseline_r
-    recon_diff = results['fc_reconstruction']['pearson_r'] - baseline_r
+    summary = "SUMMARY\n" + "="*30 + "\n\n"
+    summary += f"{'Method':<18} {'r':>8} {'Δ':>8}\n"
+    summary += "-"*30 + "\n"
+    for m, label in zip(methods, ['FC Input (base)', 'CLS Token', 'Patch Mean', 'FC Recon']):
+        r = results[m]['pearson_r']
+        diff = r - baseline_r
+        diff_str = f"{'+' if diff >= 0 else ''}{diff:.3f}" if m != 'fc_input' else "  ---"
+        summary += f"{label:<18} {r:>8.3f} {diff_str:>8}\n"
     
-    summary += f"CLS vs Baseline: {'+' if cls_diff >= 0 else ''}{cls_diff:.3f}\n"
-    summary += f"Recon vs Baseline: {'+' if recon_diff >= 0 else ''}{recon_diff:.3f}"
+    summary += "\n" + "="*30 + "\n"
+    summary += f"Train: {results['n_train']} subjects\n"
+    summary += f"Test:  {results['n_test']} subjects\n"
     
-    ax.text(0.1, 0.5, summary, fontsize=12, family='monospace', va='center')
+    ax.text(0.05, 0.95, summary, fontsize=10, family='monospace', va='top',
+            transform=ax.transAxes, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
+    plt.suptitle('Cognition Prediction: FC Baseline vs BrainLM Representations', fontsize=14, y=1.02)
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -458,22 +525,23 @@ def plot_comparison(results: dict, output_path: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Compare cognition prediction: FC baseline vs BrainLM vs reconstructed FC"
+        description="Compare cognition prediction: FC baseline vs BrainLM embeddings vs reconstructed FC"
     )
     parser.add_argument("--data-dir", "-d", default="data/aomic_cognition",
-                        help="Path to data directory")
+                        help="Path to data directory with brainlm_features.npz")
     parser.add_argument("--output-dir", "-o", default=None,
                         help="Output directory (default: output/cognition_comparison/<timestamp>)")
     
     args = parser.parse_args()
     data_path = Path(args.data_dir)
+    project_root = Path(__file__).resolve().parents[2]
     
     # Setup output
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
-        output_dir = Path(__file__).resolve().parents[2] / "output" / "cognition_comparison" / timestamp
+        output_dir = project_root / "output" / "cognition_comparison" / timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print("=" * 60)
@@ -482,10 +550,11 @@ def main():
     print(f"Data: {data_path}")
     print(f"Output: {output_dir}")
     print("=" * 60)
-    print("\nMethods:")
-    print("  1. FC from Input (Baseline) - following Ooi et al. (2022)")
-    print("  2. BrainLM CLS Embeddings")
-    print("  3. FC from BrainLM Reconstruction")
+    print("\nMethods (following Ooi et al. 2022 - KRR with nested CV):")
+    print("  1. FC from Input (Baseline)")
+    print("  2. BrainLM CLS Token Embedding")
+    print("  3. BrainLM Patch Embeddings (mean-pooled)")
+    print("  4. FC from BrainLM Reconstruction")
     
     # Run comparison
     try:
@@ -494,53 +563,146 @@ def main():
         print(f"\n❌ Error: {e}")
         sys.exit(1)
     
-    # Save results
+    # Save visualization
     plot_comparison(results, output_dir / "comparison_results.png")
     
-    # Save metadata
+    # Define method info for metadata
+    method_info = {
+        'fc_input': {
+            'name': 'FC from Input',
+            'description': 'Functional connectivity (424x424) from input timeseries - BASELINE',
+        },
+        'cls_embedding': {
+            'name': 'BrainLM CLS Embedding',
+            'description': 'CLS token from BrainLM encoder (1280 dims)',
+        },
+        'patch_embedding': {
+            'name': 'BrainLM Patch Embedding',
+            'description': 'Mean-pooled patch embeddings from BrainLM encoder (961 patches -> 1280 dims)',
+        },
+        'fc_reconstruction': {
+            'name': 'FC from Reconstruction',
+            'description': 'Functional connectivity (424x424) from BrainLM reconstructed timeseries',
+        },
+    }
+    
+    # Save results CSV
+    csv_path = output_dir / "results.csv"
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['method', 'description', 'feature_dim', 'best_alpha', 
+                        'pearson_r', 'pearson_p', 'spearman_rho', 'spearman_p', 'r2'])
+        for method_key in ['fc_input', 'cls_embedding', 'patch_embedding', 'fc_reconstruction']:
+            r = results[method_key]
+            writer.writerow([
+                method_key,
+                method_info[method_key]['description'],
+                r.get('feature_dim', 'N/A'),
+                r['best_alpha'],
+                r['pearson_r'],
+                r['pearson_p'],
+                r['spearman_rho'],
+                r['spearman_p'],
+                r['r2'],
+            ])
+    
+    # Save comprehensive metadata (like run_reconstruction_eval.py)
     metadata = {
         'timestamp': timestamp,
         'data_dir': str(data_path),
-        'methods': {
-            'fc_input': {
-                'description': 'FC from input (baseline)',
-                'r2': float(results['fc_input']['r2']),
-                'pearson_r': float(results['fc_input']['pearson_r']),
-                'pearson_p': float(results['fc_input']['pearson_p']),
-                'spearman_rho': float(results['fc_input']['spearman_rho']),
-            },
-            'cls_embedding': {
-                'description': 'BrainLM CLS token embedding',
-                'r2': float(results['cls_embedding']['r2']),
-                'pearson_r': float(results['cls_embedding']['pearson_r']),
-                'pearson_p': float(results['cls_embedding']['pearson_p']),
-                'spearman_rho': float(results['cls_embedding']['spearman_rho']),
-            },
-            'fc_reconstruction': {
-                'description': 'FC from BrainLM reconstruction',
-                'r2': float(results['fc_reconstruction']['r2']),
-                'pearson_r': float(results['fc_reconstruction']['pearson_r']),
-                'pearson_p': float(results['fc_reconstruction']['pearson_p']),
-                'spearman_rho': float(results['fc_reconstruction']['spearman_rho']),
-            },
-        }
+        'features_file': str(data_path / 'brainlm_features.npz'),
+        'n_train': results['n_train'],
+        'n_test': results['n_test'],
+        'model': {
+            'type': 'Kernel Ridge Regression (KRR)',
+            'kernel': 'Pearson correlation similarity',
+            'hyperparameter_selection': 'Nested 5-fold CV on training set',
+            'alphas_tested': [0.01, 0.1, 1.0, 10.0, 100.0],
+        },
+        'methodology': 'Following Ooi et al. (2022) NeuroImage - FC-based behavioral prediction',
+        'methods': {},
     }
+    
+    for method_key in ['fc_input', 'cls_embedding', 'patch_embedding', 'fc_reconstruction']:
+        r = results[method_key]
+        metadata['methods'][method_key] = {
+            'name': method_info[method_key]['name'],
+            'description': method_info[method_key]['description'],
+            'feature_dim': int(r.get('feature_dim', 0)),
+            'best_alpha': float(r['best_alpha']),
+            'results': {
+                'pearson_r': float(r['pearson_r']),
+                'pearson_p': float(r['pearson_p']),
+                'spearman_rho': float(r['spearman_rho']),
+                'spearman_p': float(r['spearman_p']),
+                'r2': float(r['r2']),
+            }
+        }
     
     with open(output_dir / "metadata.json", 'w') as f:
         json.dump(metadata, f, indent=2)
     
+    # Save README
+    with open(output_dir / "README.txt", 'w') as f:
+        f.write("Cognition Prediction Comparison Results\n")
+        f.write("=" * 50 + "\n\n")
+        f.write(f"Generated: {timestamp}\n")
+        f.write(f"Data source: {data_path}\n")
+        f.write(f"Train subjects: {results['n_train']}\n")
+        f.write(f"Test subjects: {results['n_test']}\n\n")
+        f.write("Methodology:\n")
+        f.write("  - Kernel Ridge Regression (KRR) with Pearson correlation kernel\n")
+        f.write("  - Hyperparameter selection via nested 5-fold CV on training set\n")
+        f.write("  - Following Ooi et al. (2022) NeuroImage paper\n\n")
+        f.write("Methods Compared:\n")
+        f.write("  1. FC Input (Baseline): FC matrix from input timeseries\n")
+        f.write("  2. CLS Embedding: BrainLM CLS token\n")
+        f.write("  3. Patch Embedding: Mean-pooled BrainLM patch embeddings\n")
+        f.write("  4. FC Reconstruction: FC matrix from BrainLM reconstruction\n\n")
+        f.write("Results (Test Set):\n")
+        f.write("-" * 50 + "\n")
+        f.write(f"{'Method':<25} {'Pearson r':>12} {'R²':>12}\n")
+        f.write("-" * 50 + "\n")
+        for method_key, name in [('fc_input', 'FC Input (Baseline)'),
+                                  ('cls_embedding', 'CLS Embedding'),
+                                  ('patch_embedding', 'Patch Embedding'),
+                                  ('fc_reconstruction', 'FC Reconstruction')]:
+            r = results[method_key]
+            f.write(f"{name:<25} {r['pearson_r']:>12.4f} {r['r2']:>12.4f}\n")
+        f.write("-" * 50 + "\n\n")
+        f.write("Files:\n")
+        f.write("  - comparison_results.png: Visualization of all methods\n")
+        f.write("  - results.csv: Per-method metrics\n")
+        f.write("  - metadata.json: Full configuration and results\n")
+    
     # Final summary
     print("\n" + "=" * 60)
-    print("FINAL COMPARISON")
+    print("FINAL COMPARISON (Test Set)")
     print("=" * 60)
     print(f"{'Method':<30} {'Pearson r':>12} {'R²':>12}")
     print("-" * 60)
-    print(f"{'FC Input (Baseline)':<30} {results['fc_input']['pearson_r']:>12.4f} {results['fc_input']['r2']:>12.4f}")
-    print(f"{'BrainLM CLS Embedding':<30} {results['cls_embedding']['pearson_r']:>12.4f} {results['cls_embedding']['r2']:>12.4f}")
-    print(f"{'FC Reconstruction':<30} {results['fc_reconstruction']['pearson_r']:>12.4f} {results['fc_reconstruction']['r2']:>12.4f}")
+    for method_key, name in [('fc_input', 'FC Input (Baseline)'),
+                              ('cls_embedding', 'BrainLM CLS Embedding'),
+                              ('patch_embedding', 'BrainLM Patch Embedding'),
+                              ('fc_reconstruction', 'FC Reconstruction')]:
+        r = results[method_key]
+        print(f"{name:<30} {r['pearson_r']:>12.4f} {r['r2']:>12.4f}")
     print("=" * 60)
     
+    # Show comparison to baseline
+    baseline_r = results['fc_input']['pearson_r']
+    print("\nComparison to FC Baseline:")
+    for method_key, name in [('cls_embedding', 'CLS Embedding'),
+                              ('patch_embedding', 'Patch Embedding'),
+                              ('fc_reconstruction', 'FC Reconstruction')]:
+        diff = results[method_key]['pearson_r'] - baseline_r
+        print(f"  {name}: {'+' if diff >= 0 else ''}{diff:.4f}")
+    
     print(f"\n✓ Results saved to: {output_dir}")
+    print("  - comparison_results.png")
+    print("  - results.csv")
+    print("  - metadata.json")
+    print("  - README.txt")
 
 
 if __name__ == "__main__":
