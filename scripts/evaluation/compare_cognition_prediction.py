@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr, spearmanr
-from sklearn.metrics import r2_score
+from sklearn.metrics import r2_score, mean_absolute_percentage_error
 from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
 
@@ -241,6 +241,7 @@ def train_test_split_predict(X_train: np.ndarray, y_train: np.ndarray,
     r, p_r = pearsonr(y_test, y_pred)
     rho, p_rho = spearmanr(y_test, y_pred)
     r2 = r2_score(y_test, y_pred)
+    mape = mean_absolute_percentage_error(y_test, y_pred)
     
     return {
         'r2': r2,
@@ -248,6 +249,7 @@ def train_test_split_predict(X_train: np.ndarray, y_train: np.ndarray,
         'pearson_p': p_r,
         'spearman_rho': rho,
         'spearman_p': p_rho,
+        'mape': mape,
         'best_alpha': best_alpha,
         'y_true': y_test,
         'y_pred': y_pred,
@@ -376,6 +378,7 @@ def run_comparison(data_path: Path, output_dir: Path) -> dict:
     print(f"  R² = {results['fc_input']['r2']:.4f}")
     print(f"  Pearson r = {results['fc_input']['pearson_r']:.4f} (p={results['fc_input']['pearson_p']:.2e})")
     print(f"  Spearman ρ = {results['fc_input']['spearman_rho']:.4f}")
+    print(f"  MAPE = {results['fc_input']['mape']:.4f}")
     
     # Method 2: BrainLM CLS Embeddings
     print("\n" + "=" * 60)
@@ -391,6 +394,7 @@ def run_comparison(data_path: Path, output_dir: Path) -> dict:
     print(f"  R² = {results['cls_embedding']['r2']:.4f}")
     print(f"  Pearson r = {results['cls_embedding']['pearson_r']:.4f} (p={results['cls_embedding']['pearson_p']:.2e})")
     print(f"  Spearman ρ = {results['cls_embedding']['spearman_rho']:.4f}")
+    print(f"  MAPE = {results['cls_embedding']['mape']:.4f}")
     
     # Method 3: BrainLM Full Patch Embeddings (mean-pooled)
     print("\n" + "=" * 60)
@@ -406,6 +410,7 @@ def run_comparison(data_path: Path, output_dir: Path) -> dict:
     print(f"  R² = {results['patch_embedding']['r2']:.4f}")
     print(f"  Pearson r = {results['patch_embedding']['pearson_r']:.4f} (p={results['patch_embedding']['pearson_p']:.2e})")
     print(f"  Spearman ρ = {results['patch_embedding']['spearman_rho']:.4f}")
+    print(f"  MAPE = {results['patch_embedding']['mape']:.4f}")
     
     # Method 4: FC from Reconstruction
     print("\n" + "=" * 60)
@@ -421,6 +426,7 @@ def run_comparison(data_path: Path, output_dir: Path) -> dict:
     print(f"  R² = {results['fc_reconstruction']['r2']:.4f}")
     print(f"  Pearson r = {results['fc_reconstruction']['pearson_r']:.4f} (p={results['fc_reconstruction']['pearson_p']:.2e})")
     print(f"  Spearman ρ = {results['fc_reconstruction']['spearman_rho']:.4f}")
+    print(f"  MAPE = {results['fc_reconstruction']['mape']:.4f}")
     
     # Store sample sizes for metadata
     results['n_train'] = len(train_matched)
@@ -591,7 +597,7 @@ def main():
     with open(csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['method', 'description', 'feature_dim', 'best_alpha', 
-                        'pearson_r', 'pearson_p', 'spearman_rho', 'spearman_p', 'r2'])
+                        'pearson_r', 'pearson_p', 'spearman_rho', 'spearman_p', 'r2', 'mape'])
         for method_key in ['fc_input', 'cls_embedding', 'patch_embedding', 'fc_reconstruction']:
             r = results[method_key]
             writer.writerow([
@@ -604,6 +610,7 @@ def main():
                 r['spearman_rho'],
                 r['spearman_p'],
                 r['r2'],
+                r['mape'],
             ])
     
     # Save comprehensive metadata (like run_reconstruction_eval.py)
@@ -636,6 +643,7 @@ def main():
                 'spearman_rho': float(r['spearman_rho']),
                 'spearman_p': float(r['spearman_p']),
                 'r2': float(r['r2']),
+                'mape': float(r['mape']),
             }
         }
     
@@ -676,18 +684,18 @@ def main():
         f.write("  - metadata.json: Full configuration and results\n")
     
     # Final summary
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 70)
     print("FINAL COMPARISON (Test Set)")
-    print("=" * 60)
-    print(f"{'Method':<30} {'Pearson r':>12} {'R²':>12}")
-    print("-" * 60)
+    print("=" * 70)
+    print(f"{'Method':<30} {'Pearson r':>12} {'R²':>12} {'MAPE':>12}")
+    print("-" * 70)
     for method_key, name in [('fc_input', 'FC Input (Baseline)'),
                               ('cls_embedding', 'BrainLM CLS Embedding'),
                               ('patch_embedding', 'BrainLM Patch Embedding'),
                               ('fc_reconstruction', 'FC Reconstruction')]:
         r = results[method_key]
-        print(f"{name:<30} {r['pearson_r']:>12.4f} {r['r2']:>12.4f}")
-    print("=" * 60)
+        print(f"{name:<30} {r['pearson_r']:>12.4f} {r['r2']:>12.4f} {r['mape']:>12.4f}")
+    print("=" * 70)
     
     # Show comparison to baseline
     baseline_r = results['fc_input']['pearson_r']
