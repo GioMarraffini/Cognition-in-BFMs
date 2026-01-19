@@ -23,22 +23,7 @@ import numpy as np
 import torch
 
 from models.brainlm import load_model, extract_all_features_batch
-
-
-def get_preprocessed_files(processed_dir: str, max_subjects: int = None) -> dict:
-    """Get preprocessed .npy files mapping subject_id -> path."""
-    path = Path(processed_dir)
-    if not path.exists():
-        return {}
-    
-    files = {}
-    for f in sorted(path.glob("*.npy")):
-        subject_id = f.stem.replace("_a424", "")
-        files[subject_id] = str(f)
-        if max_subjects and len(files) >= max_subjects:
-            break
-    
-    return files
+from scripts.data_preparation.utils import get_preprocessed_files
 
 
 def organize_features(features_dict: dict) -> dict:
