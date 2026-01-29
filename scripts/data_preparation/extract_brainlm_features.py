@@ -61,7 +61,7 @@ def main():
         help="Path to data directory with processed/{train,test}/ subdirs",
     )
     parser.add_argument(
-        "--model-size", "-m", default="650M", choices=["97M", "650M"], help="BrainLM model size"
+        "--model-size", "-m", default="650M", choices=["111M", "650M"], help="BrainLM model size"
     )
     parser.add_argument("--device", default=None, help="Device (cuda/cpu, auto-detect if not set)")
     parser.add_argument(
@@ -79,7 +79,7 @@ def main():
     # Setup
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     data_path = Path(args.data_dir)
-    output_file = args.output or str(data_path / "brainlm_features.npz")
+    output_file = args.output or str(data_path / f"brainlm_{args.model_size}_features.npz")
 
     print("=" * 60)
     print("BRAINLM FULL FEATURE EXTRACTION")

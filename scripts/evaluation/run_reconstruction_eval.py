@@ -320,7 +320,7 @@ def main():
     parser.add_argument("--deterministic", action="store_true", help="Use deterministic masking")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for deterministic mode")
     parser.add_argument(
-        "--model-size", "-m", default="650M", choices=["97M", "650M"], help="BrainLM model size"
+        "--model-size", "-m", default="650M", choices=["111M", "650M"], help="BrainLM model size"
     )
 
     args = parser.parse_args()

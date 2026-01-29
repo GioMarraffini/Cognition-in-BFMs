@@ -261,10 +261,14 @@ def train_test_split_predict(
     }
 
 
-def load_features_and_scores(data_path: Path) -> dict:
+def load_features_and_scores(data_path: Path, features_file: Path = None) -> dict:
     """Load features and cognition scores."""
     # Load BrainLM features
-    features_file = data_path / "brainlm_features.npz"
+    if features_file is None:
+        features_file = data_path / "brainlm_features.npz"
+    else:
+        features_file = Path(features_file)
+    
     if not features_file.exists():
         raise FileNotFoundError(
             f"Features not found: {features_file}\nRun extract_all_features.py first."
@@ -299,14 +303,14 @@ def match_subjects(subjects: np.ndarray, data: np.ndarray, scores_df: pd.DataFra
     return np.array(X), np.array(y), matched
 
 
-def run_comparison(data_path: Path, output_dir: Path) -> dict:
+def run_comparison(data_path: Path, output_dir: Path, features_file: Path = None) -> dict:
     """Run the full comparison analysis."""
 
     print("\n" + "=" * 60)
     print("Loading data...")
     print("=" * 60)
 
-    data = load_features_and_scores(data_path)
+    data = load_features_and_scores(data_path, features_file)
     features = data["features"]
 
     # Extract data arrays
@@ -587,6 +591,12 @@ def main():
         default=None,
         help="Output directory (default: output/cognition_comparison/<timestamp>)",
     )
+    parser.add_argument(
+        "--features-file",
+        "-f",
+        default=None,
+        help="Path to features .npz file (default: <data-dir>/brainlm_features.npz)",
+    )
 
     args = parser.parse_args()
     data_path = Path(args.data_dir)
@@ -614,7 +624,7 @@ def main():
 
     # Run comparison
     try:
-        results = run_comparison(data_path, output_dir)
+        results = run_comparison(data_path, output_dir, args.features_file)
     except FileNotFoundError as e:
         print(f"\n❌ Error: {e}")
         sys.exit(1)
