@@ -303,7 +303,7 @@ def run_evaluation(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate BrainLM reconstruction quality")
+    parser = argparse.ArgumentParser(description="Evaluate foundation model reconstruction quality")
     parser.add_argument(
         "--data-dir",
         "-d",
@@ -320,10 +320,32 @@ def main():
     parser.add_argument("--deterministic", action="store_true", help="Use deterministic masking")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for deterministic mode")
     parser.add_argument(
-        "--model-size", "-m", default="650M", choices=["111M", "650M"], help="BrainLM model size"
+        "--model",
+        default="brainlm",
+        choices=["brainlm", "brainjepa"],
+        help="Foundation model to evaluate (default: brainlm)",
+    )
+    parser.add_argument(
+        "--model-size",
+        "-m",
+        default="650M",
+        choices=["111M", "650M"],
+        help="BrainLM model size (ignored for brainjepa)",
     )
 
     args = parser.parse_args()
+
+    # Brain-JEPA doesn't perform signal reconstruction (JEPA architecture)
+    if args.model == "brainjepa":
+        print("=" * 60)
+        print("NOTE: Brain-JEPA does NOT perform signal reconstruction")
+        print("=" * 60)
+        print("\nBrain-JEPA uses a Joint-Embedding Predictive Architecture (JEPA)")
+        print("that predicts representations in latent space, not the original signal.")
+        print("\nReconstruction evaluation is not applicable for Brain-JEPA.")
+        print("Use compare_cognition_prediction.py for Brain-JEPA evaluation.")
+        print("=" * 60)
+        return
 
     run_evaluation(
         data_dir=args.data_dir,
