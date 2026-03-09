@@ -184,8 +184,8 @@ def stream_download_preprocess_brainjepa(
     print("=" * 70)
     print("STREAMING DOWNLOAD + PREPROCESS PIPELINE (Brain-JEPA style)")
     print("=" * 70)
-    print(f"Atlas: Schaefer-400 + Tian-50 = 450 ROIs")
-    print(f"Timepoints: 160")
+    print("Atlas: Schaefer-400 + Tian-50 = 450 ROIs")
+    print("Timepoints: 160")
     print(f"Target: {n_train} train + {n_test} test subjects")
     print(f"Workers: {n_workers}")
     print(f"Dataset: {dataset_dir}")
@@ -265,7 +265,15 @@ def stream_download_preprocess_brainjepa(
     for split, subjects in [("train", train_subjects), ("test", test_subjects)]:
         for subject_id in subjects:
             tasks.append(
-                (subject_id, split, str(dataset_path), schaefer_atlas, tian_atlas, global_stats, str(processed_dir))
+                (
+                    subject_id,
+                    split,
+                    str(dataset_path),
+                    schaefer_atlas,
+                    tian_atlas,
+                    global_stats,
+                    str(processed_dir),
+                )
             )
 
     print(f"\n⏱️  Starting processing with {n_workers} worker(s)...")
@@ -287,7 +295,9 @@ def stream_download_preprocess_brainjepa(
             elapsed = (datetime.now() - start_time).total_seconds() / 60
             rate = success_count / elapsed if elapsed > 0 else 0
             remaining = (len(tasks) - i) / rate if rate > 0 else 0
-            print(f"   📊 Progress: {success_count}/{len(tasks)} done, ~{remaining:.0f} min remaining")
+            print(
+                f"   📊 Progress: {success_count}/{len(tasks)} done, ~{remaining:.0f} min remaining"
+            )
     else:
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
             futures = {executor.submit(process_single_subject, task): task for task in tasks}
@@ -313,7 +323,7 @@ def stream_download_preprocess_brainjepa(
     print(f"Processed: {success_count} succeeded, {fail_count} failed")
     print(f"Time: {elapsed:.1f} minutes")
     print(f"Output: {processed_dir}")
-    print(f"File format: <subject_id>_schaefer450.npy [450 ROIs, 160 timepoints]")
+    print("File format: <subject_id>_schaefer450.npy [450 ROIs, 160 timepoints]")
     print("=" * 70)
 
 
@@ -327,9 +337,7 @@ def main():
     )
     parser.add_argument("--n-train", type=int, default=150, help="Number of training subjects")
     parser.add_argument("--n-test", type=int, default=30, help="Number of test subjects")
-    parser.add_argument(
-        "--n-workers", "-w", type=int, default=1, help="Number of parallel workers"
-    )
+    parser.add_argument("--n-workers", "-w", type=int, default=1, help="Number of parallel workers")
     parser.add_argument(
         "--no-skip", action="store_true", help="Don't skip already processed subjects"
     )

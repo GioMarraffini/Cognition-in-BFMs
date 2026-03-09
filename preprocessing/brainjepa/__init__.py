@@ -21,7 +21,7 @@ from .preprocess_brainjepa import (
 
 __all__ = [
     "parcellate_schaefer_tian",
-    "preprocess_single", 
+    "preprocess_single",
     "extract_timepoints",
     "load_preprocessed",
     "get_atlas_paths",
