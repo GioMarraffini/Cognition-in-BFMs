@@ -8,6 +8,7 @@ toolkit/sample_dataset/raw_fMRI_data/*
 data/
 
 venv/
+.env
 
 output/
 
