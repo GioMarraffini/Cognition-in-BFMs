@@ -268,7 +268,7 @@ def load_features_and_scores(data_path: Path, features_file: Path = None) -> dic
         features_file = data_path / "brainlm_features.npz"
     else:
         features_file = Path(features_file)
-    
+
     if not features_file.exists():
         raise FileNotFoundError(
             f"Features not found: {features_file}\nRun extract_all_features.py first."
@@ -303,15 +303,17 @@ def match_subjects(subjects: np.ndarray, data: np.ndarray, scores_df: pd.DataFra
     return np.array(X), np.array(y), matched
 
 
-def run_comparison(data_path: Path, output_dir: Path, features_file: Path = None, model_type: str = "brainlm") -> dict:
+def run_comparison(
+    data_path: Path, output_dir: Path, features_file: Path = None, model_type: str = "brainlm"
+) -> dict:
     """Run the full comparison analysis.
-    
+
     Args:
         data_path: Path to data directory
         output_dir: Path to output directory
         features_file: Path to features .npz file
         model_type: "brainlm" or "brainjepa"
-    
+
     Returns:
         Dictionary with results for each method
     """
@@ -328,7 +330,7 @@ def run_comparison(data_path: Path, output_dir: Path, features_file: Path = None
     train_inputs = features["train_inputs"]
     test_subjects = features["test_subjects"]
     test_inputs = features["test_inputs"]
-    
+
     # Handle model-specific feature names
     if model_type == "brainjepa":
         # Brain-JEPA: pooled_embeddings instead of cls_embeddings, no reconstructions
@@ -450,7 +452,7 @@ def run_comparison(data_path: Path, output_dir: Path, features_file: Path = None
     else:
         emb_name = "BrainLM CLS Embedding"
         emb_desc = "CLS token"
-    
+
     print("\n" + "=" * 60)
     print(f"METHOD 2: {emb_name}")
     print(f"  Features: {X_train_cls.shape[1]} ({emb_desc})")
@@ -473,7 +475,7 @@ def run_comparison(data_path: Path, output_dir: Path, features_file: Path = None
     else:
         patch_name = "BrainLM Patch Embeddings"
         patch_desc = f"mean of {train_patches.shape[1]} patches"
-    
+
     print("\n" + "=" * 60)
     print(f"METHOD 3: {patch_name} (mean-pooled)")
     print(f"  Features: {X_train_patches.shape[1]} ({patch_desc})")
@@ -524,7 +526,7 @@ def run_comparison(data_path: Path, output_dir: Path, features_file: Path = None
 
 def plot_comparison(results: dict, output_path: Path, model_type: str = "brainlm"):
     """Create comparison visualization for 3 or 4 methods depending on model type."""
-    
+
     # Determine methods based on model type
     if model_type == "brainjepa" or "fc_reconstruction" not in results:
         methods = ["fc_input", "cls_embedding", "patch_embedding"]
@@ -743,7 +745,7 @@ def main():
     print(f"Data: {data_path}")
     print(f"Output: {output_dir}")
     print("=" * 60)
-    
+
     if args.model == "brainjepa":
         print("\nMethods (following Ooi et al. 2022 - KRR with nested CV):")
         print("  1. FC from Input (Baseline)")
@@ -770,7 +772,7 @@ def main():
     # Define method info for metadata based on model type
     n_rois = 450 if args.model == "brainjepa" else 424
     fc_size = f"{n_rois}x{n_rois}"
-    
+
     if args.model == "brainjepa":
         method_info = {
             "fc_input": {
@@ -868,7 +870,7 @@ def main():
         "methodology": "Following Ooi et al. (2022) NeuroImage - FC-based behavioral prediction",
         "methods": {},
     }
-    
+
     for method_key in methods_to_save:
         r = results[method_key]
         metadata["methods"][method_key] = {
@@ -918,7 +920,7 @@ def main():
         f.write("-" * 50 + "\n")
         f.write(f"{'Method':<25} {'Pearson r':>12} {'R²':>12}\n")
         f.write("-" * 50 + "\n")
-        
+
         if args.model == "brainjepa":
             method_names = [
                 ("fc_input", "FC Input (Baseline)"),
@@ -932,7 +934,7 @@ def main():
                 ("patch_embedding", "Patch Embedding"),
                 ("fc_reconstruction", "FC Reconstruction"),
             ]
-        
+
         for method_key, name in method_names:
             if method_key in results:
                 r = results[method_key]
@@ -949,7 +951,7 @@ def main():
     print("=" * 70)
     print(f"{'Method':<30} {'Pearson r':>12} {'R²':>12} {'MAPE':>12}")
     print("-" * 70)
-    
+
     if args.model == "brainjepa":
         final_methods = [
             ("fc_input", "FC Input (Baseline)"),
@@ -963,7 +965,7 @@ def main():
             ("patch_embedding", "BrainLM Patch Embedding"),
             ("fc_reconstruction", "FC Reconstruction"),
         ]
-    
+
     for method_key, name in final_methods:
         if method_key in results:
             r = results[method_key]

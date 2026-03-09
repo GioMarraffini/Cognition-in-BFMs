@@ -15,7 +15,6 @@ Atlas sources:
 """
 
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -27,12 +26,12 @@ N_TIMEPOINTS = 160
 def get_atlas_paths() -> dict[str, Path]:
     """
     Get paths to Schaefer and Tian atlases.
-    
+
     Returns:
         Dict with 'schaefer' and 'tian' atlas paths
     """
     atlas_dir = Path(__file__).parent.parent / "atlases"
-    
+
     return {
         "schaefer": atlas_dir / "Schaefer2018_400Parcels_7Networks_order_FSLMNI152_2mm.nii.gz",
         "tian": atlas_dir / "Tian_Subcortex_S3_3T.nii.gz",
@@ -51,7 +50,7 @@ def parcellate_schaefer_tian(
 ) -> np.ndarray:
     """
     Parcellate fMRI to Schaefer-400 + Tian-50 ROIs.
-    
+
     Args:
         nifti_path: Path to preprocessed fMRI NIfTI
         schaefer_atlas: Path to Schaefer-400 atlas (default: from atlases dir)
@@ -61,17 +60,17 @@ def parcellate_schaefer_tian(
         high_pass: High-pass filter cutoff (Hz)
         t_r: Repetition time in seconds
         confounds: Motion confounds array [n_timepoints, n_confounds]
-    
+
     Returns:
         Time series array of shape [450, n_timepoints]
     """
     from nilearn.maskers import NiftiLabelsMasker
-    
+
     # Get default atlas paths
     atlas_paths = get_atlas_paths()
     schaefer_atlas = schaefer_atlas or str(atlas_paths["schaefer"])
     tian_atlas = tian_atlas or str(atlas_paths["tian"])
-    
+
     # Check atlases exist
     if not Path(schaefer_atlas).exists():
         raise FileNotFoundError(
@@ -83,7 +82,7 @@ def parcellate_schaefer_tian(
             f"Tian atlas not found: {tian_atlas}\n"
             "Download from: https://github.com/yetianmed/subcortex"
         )
-    
+
     # Extract Schaefer-400 cortical ROIs
     masker_schaefer = NiftiLabelsMasker(
         labels_img=schaefer_atlas,
@@ -95,7 +94,7 @@ def parcellate_schaefer_tian(
         resampling_target="labels",
     )
     schaefer_ts = masker_schaefer.fit_transform(nifti_path, confounds=confounds)
-    
+
     # Extract Tian-50 subcortical ROIs
     masker_tian = NiftiLabelsMasker(
         labels_img=tian_atlas,
@@ -107,11 +106,11 @@ def parcellate_schaefer_tian(
         resampling_target="labels",
     )
     tian_ts = masker_tian.fit_transform(nifti_path, confounds=confounds)
-    
+
     # Concatenate: [T, 400] + [T, 50] -> [T, 450]
     combined = np.concatenate([schaefer_ts, tian_ts], axis=1)
-    
-    # Transpose to [450, T] 
+
+    # Transpose to [450, T]
     return combined.T.astype(np.float32)
 
 
@@ -122,12 +121,12 @@ def apply_robust_scaling(
 ) -> np.ndarray:
     """
     Apply robust scaling: (x - median) / IQR per ROI.
-    
+
     Args:
         data: Time series [n_rois, n_timepoints]
         global_median: Per-ROI median [n_rois]
         global_iqr: Per-ROI IQR [n_rois]
-    
+
     Returns:
         Scaled data
     """
@@ -137,10 +136,10 @@ def apply_robust_scaling(
 def apply_zscore_normalization(data: np.ndarray) -> np.ndarray:
     """
     Apply z-score normalization per ROI.
-    
+
     Args:
         data: Time series [n_rois, n_timepoints]
-    
+
     Returns:
         Normalized data
     """
@@ -156,24 +155,24 @@ def extract_timepoints(
 ) -> np.ndarray:
     """
     Extract fixed number of timepoints.
-    
+
     Args:
         data: Time series [n_rois, T]
         n_timepoints: Target number of timepoints (default 160)
         method: Extraction method - "center", "start", or "random"
-    
+
     Returns:
         Data with shape [n_rois, n_timepoints]
     """
     T = data.shape[1]
-    
+
     if T < n_timepoints:
         # Pad with edge values
         pad_total = n_timepoints - T
         pad_left = pad_total // 2
         pad_right = pad_total - pad_left
         return np.pad(data, ((0, 0), (pad_left, pad_right)), mode="edge")
-    
+
     elif T > n_timepoints:
         if method == "center":
             start = (T - n_timepoints) // 2
@@ -183,9 +182,9 @@ def extract_timepoints(
             start = np.random.randint(0, T - n_timepoints + 1)
         else:
             raise ValueError(f"Unknown method: {method}")
-        
+
         return data[:, start : start + n_timepoints]
-    
+
     return data
 
 
@@ -200,7 +199,7 @@ def preprocess_single(
 ) -> np.ndarray:
     """
     Full preprocessing pipeline for a single subject.
-    
+
     Args:
         nifti_path: Path to preprocessed fMRI NIfTI
         schaefer_atlas: Path to Schaefer-400 atlas
@@ -209,7 +208,7 @@ def preprocess_single(
         global_iqr: Per-ROI IQR for robust scaling
         t_r: Repetition time
         confounds: Motion confounds
-    
+
     Returns:
         Preprocessed data [450, 160]
     """
@@ -221,45 +220,45 @@ def preprocess_single(
         t_r=t_r,
         confounds=confounds,
     )
-    
+
     # Step 2: Scaling
     if global_median is not None and global_iqr is not None:
         data = apply_robust_scaling(data, global_median, global_iqr)
     else:
         data = apply_zscore_normalization(data)
-    
+
     # Step 3: Extract 160 timepoints
     data = extract_timepoints(data, n_timepoints=N_TIMEPOINTS, method="center")
-    
+
     return data
 
 
 def load_preprocessed(npy_path: str, n_timepoints: int = N_TIMEPOINTS) -> np.ndarray:
     """
     Load and validate preprocessed .npy file.
-    
+
     Args:
         npy_path: Path to .npy file
         n_timepoints: Expected number of timepoints
-    
+
     Returns:
         Data array of shape [450, n_timepoints]
     """
     data = np.load(npy_path)
-    
+
     # Handle transposed data
     if data.shape[0] != N_ROIS and data.shape[1] == N_ROIS:
         data = data.T
-    
+
     if data.shape[0] != N_ROIS:
         raise ValueError(
             f"Expected {N_ROIS} ROIs but got {data.shape[0]}. "
             f"Data may have been preprocessed for BrainLM (424 parcels) instead of Brain-JEPA (450 ROIs)."
         )
-    
+
     # Adjust timepoints
     data = extract_timepoints(data, n_timepoints=n_timepoints)
-    
+
     return data.astype(np.float32)
 
 
