@@ -12,15 +12,17 @@ mean-pooled embedding analysis:
     arrangement of patches carries cognition signal beyond the mean.
 
   Method B — Embedding-Space Similarity Matrix (emb_sim_matrix):
-    Compute a pairwise cosine-similarity matrix between patch embeddings, analogous
+    Compute a pairwise similarity matrix between patch embeddings, analogous
     to how FC is computed between ROI timeseries. Use the lower triangle as features
     for KRR — i.e. treat the embedding space "connectivity" the same way Ooi et al.
     treat functional connectivity.
 
     For Brain-JEPA: patches are purely temporal (1 conv per ROI, patch_size=16),
-    so 4500 patches = 450 ROIs × 10 temporal windows. We average the 10 temporal
-    windows per ROI to obtain a per-ROI embedding (450 × 768), then compute the
-    450 × 450 cosine similarity matrix. This is the direct latent-space analog of FC.
+    so 4500 patches = 450 ROIs × 10 temporal windows. We average over the hidden
+    dimension to obtain a per-ROI scalar timeseries (450 × 10), then compute the
+    450 × 450 Pearson correlation matrix over the temporal dimension — the direct
+    latent-space analog of FC. (Averaging over time instead was found to discard
+    the temporal structure and yield poor results.)
 
     For BrainLM: patches span multiple ROIs and timepoints (2-D grid patches),
     so a clean ROI assignment is not possible. We compute the full (n_patches ×
@@ -393,15 +395,26 @@ def compute_patch_cosine_sim_features(patches: np.ndarray) -> np.ndarray:
     return sim[tril_idx].astype(np.float32)
 
 
-def compute_roi_cosine_sim_features(
+def compute_roi_temporal_corr_features(
     patches: np.ndarray, n_rois: int, n_temporal: int
 ) -> np.ndarray:
     """
-    Brain-JEPA only: average temporal patches per ROI, then compute ROI-to-ROI
-    cosine similarity (direct latent-space analog of FC).
+    Brain-JEPA only: compute a Pearson correlation matrix over the temporal
+    dimension in embedding space — the direct latent-space analog of FC.
 
     Brain-JEPA PatchEmbed uses kernel=(1, patch_size), stride=(1, patch_size), so
     patches are ordered ROI-major: [roi0_t0..t9, roi1_t0..t9, ..., roi449_t0..t9].
+
+    Strategy:
+      1. Reshape [n_rois*n_temporal, embed_dim] → [n_rois, n_temporal, embed_dim]
+      2. Mean over the hidden/embedding dimension → [n_rois, n_temporal]
+         Each ROI now has a 10-point scalar "timeseries" in embedding space.
+      3. Pearson correlation across the temporal dimension → [n_rois, n_rois]
+         Identical operation to standard FC, preserving temporal structure.
+
+    Averaging over time (the previous approach) discards temporal structure and
+    was found to yield poor results; averaging over the hidden dimension instead
+    retains it.
 
     Args:
         patches:    [n_patches=n_rois*n_temporal, embed_dim]  (4500 × 768)
@@ -411,12 +424,12 @@ def compute_roi_cosine_sim_features(
     Returns:
         feature vector of length n_rois*(n_rois-1)//2  (101,025 for 450 ROIs)
     """
-    roi_emb = patches.reshape(n_rois, n_temporal, -1).mean(axis=1)  # (n_rois, embed_dim)
-    norms = np.linalg.norm(roi_emb, axis=1, keepdims=True)
-    normalized = roi_emb / (norms + 1e-8)
-    sim = normalized @ normalized.T  # (n_rois, n_rois)
+    # [n_rois, n_temporal, embed_dim] → mean over hidden dim → [n_rois, n_temporal]
+    roi_timeseries = patches.reshape(n_rois, n_temporal, -1).mean(axis=2)
+    fc = np.corrcoef(roi_timeseries)  # (n_rois, n_rois)
+    fc = np.nan_to_num(fc, nan=0.0)
     tril_idx = np.tril_indices(n_rois, k=-1)
-    return sim[tril_idx].astype(np.float32)
+    return fc[tril_idx].astype(np.float32)
 
 
 def compute_all_sim_features(
@@ -435,19 +448,23 @@ def compute_all_sim_features(
     n_patches = all_patches.shape[1]
 
     if model_type == "brainjepa":
-        # ROI-averaged cosine similarity: 450×450 → lower tri = 101,025 features
+        # Temporal-correlation analog of FC: 450×450 → lower tri = 101,025 features
+        # Mean over hidden dim → [450, 10] timeseries → Pearson corr → [450, 450]
         n_rois, n_temporal = 450, 10
         n_feat = n_rois * (n_rois - 1) // 2
         desc = (
-            f"ROI-averaged cosine similarity ({n_rois}×{n_rois} matrix → {n_feat:,} features); "
-            f"4500 patches reshaped to 450 ROIs × 10 temporal windows, then averaged per ROI"
+            f"Embedding-space FC analog: Pearson correlation over {n_temporal} temporal windows "
+            f"({n_rois}×{n_rois} matrix → {n_feat:,} features); "
+            f"4500 patches reshaped to {n_rois} ROIs × {n_temporal} time windows, "
+            f"mean over hidden dim yields per-ROI scalar timeseries, "
+            f"then Pearson correlation across time (same operation as standard FC)"
         )
         print(
-            f"  Computing ROI-averaged cosine sim ({n_rois}×{n_rois}) for {n_subjects} subjects ..."
+            f"  Computing embedding-space FC ({n_rois}×{n_rois}) for {n_subjects} subjects ..."
         )
 
         def compute_fn(p):
-            return compute_roi_cosine_sim_features(p, n_rois, n_temporal)
+            return compute_roi_temporal_corr_features(p, n_rois, n_temporal)
 
     else:
         # Patch-to-patch cosine similarity
@@ -721,7 +738,7 @@ _METHOD_STYLE = {
     "patch_mean": {"label": "Patch Mean\n(existing)", "color": "orchid"},
     "fc_reconstruction": {"label": "FC\nReconstruction", "color": "seagreen"},
     "flat_patches": {"label": "Flat Patches\n+ PCA", "color": "#e67e22"},
-    "emb_sim_matrix": {"label": "Emb Cosine\nSim Matrix", "color": "#8e44ad"},
+    "emb_sim_matrix": {"label": "Emb FC\n(hidden mean)", "color": "#8e44ad"},
 }
 
 
@@ -888,7 +905,7 @@ _METHOD_NAMES = {
     "patch_mean": "Patch Mean (mean-pooled)",
     "fc_reconstruction": "FC from Reconstruction",
     "flat_patches": "Flattened Patches + PCA",
-    "emb_sim_matrix": "Embedding Cosine Similarity Matrix",
+    "emb_sim_matrix": "Embedding-Space FC (hidden-mean timeseries)",
 }
 
 
@@ -994,11 +1011,15 @@ def save_results(
             "emb_sim_matrix": {
                 "description": descs.get("emb_sim_matrix", ""),
                 "motivation": (
-                    "Latent-space analog of functional connectivity: pairwise cosine similarity "
-                    "between patch embeddings (or ROI-averaged embeddings for Brain-JEPA). "
-                    "For Brain-JEPA, 4500 patches are reshaped to 450 ROIs x 10 temporal windows "
-                    "and averaged per ROI, yielding a 450x450 cosine similarity matrix — the "
-                    "direct embedding-space counterpart of the input FC matrix."
+                    "Latent-space analog of functional connectivity. "
+                    "For Brain-JEPA: 4500 patches are reshaped to 450 ROIs x 10 temporal windows; "
+                    "the hidden dimension is averaged to obtain a per-ROI scalar timeseries "
+                    "(450 x 10), then Pearson correlation is computed across the temporal "
+                    "dimension — the direct embedding-space counterpart of the input FC matrix. "
+                    "(Averaging over time instead discards temporal structure and was found to "
+                    "yield poor results.) "
+                    "For BrainLM: clean ROI assignment is not possible, so pairwise cosine "
+                    "similarity between patch embeddings is used instead."
                 ),
             },
         },
@@ -1045,8 +1066,10 @@ def save_results(
         f.write("New Methods (co-advisor experiments):\n")
         f.write("  flat_patches   : All patch embeddings flattened then reduced with\n")
         f.write(f"                   IncrementalPCA({pca_components}) fitted on train set only\n")
-        f.write("  emb_sim_matrix : Pairwise cosine similarity between patch embeddings\n")
-        f.write("                   (ROI-averaged for Brain-JEPA, patch-to-patch for BrainLM)\n\n")
+        f.write("  emb_sim_matrix : Embedding-space FC analog\n")
+        f.write("                   Brain-JEPA: mean over hidden dim → per-ROI scalar timeseries\n")
+        f.write("                   (450×10), then Pearson correlation across temporal dim.\n")
+        f.write("                   BrainLM: patch-to-patch cosine similarity (no clean ROI map).\n\n")
         f.write("Results (Test Set):\n")
         f.write("-" * 60 + "\n")
         f.write(f"{'Method':<28} {'Pearson r':>10} {'R²':>10}\n")
