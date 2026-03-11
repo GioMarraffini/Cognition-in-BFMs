@@ -459,9 +459,7 @@ def compute_all_sim_features(
             f"mean over hidden dim yields per-ROI scalar timeseries, "
             f"then Pearson correlation across time (same operation as standard FC)"
         )
-        print(
-            f"  Computing embedding-space FC ({n_rois}×{n_rois}) for {n_subjects} subjects ..."
-        )
+        print(f"  Computing embedding-space FC ({n_rois}×{n_rois}) for {n_subjects} subjects ...")
 
         def compute_fn(p):
             return compute_roi_temporal_corr_features(p, n_rois, n_temporal)
@@ -1069,7 +1067,9 @@ def save_results(
         f.write("  emb_sim_matrix : Embedding-space FC analog\n")
         f.write("                   Brain-JEPA: mean over hidden dim → per-ROI scalar timeseries\n")
         f.write("                   (450×10), then Pearson correlation across temporal dim.\n")
-        f.write("                   BrainLM: patch-to-patch cosine similarity (no clean ROI map).\n\n")
+        f.write(
+            "                   BrainLM: patch-to-patch cosine similarity (no clean ROI map).\n\n"
+        )
         f.write("Results (Test Set):\n")
         f.write("-" * 60 + "\n")
         f.write(f"{'Method':<28} {'Pearson r':>10} {'R²':>10}\n")
